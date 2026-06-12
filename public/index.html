@@ -29,8 +29,7 @@
   .status-bar {
     display: flex; justify-content: space-between; align-items: center;
     padding: 8px 16px; background: var(--card); border: 1px solid var(--border);
-    border-radius: 8px; margin-bottom: 20px; font-size: 12px;
-    flex-wrap: wrap; gap: 8px;
+    border-radius: 8px; margin-bottom: 20px; font-size: 12px; flex-wrap: wrap; gap: 8px;
   }
   .status-bar .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
   .status-bar .dot.online { background: #22c55e; }
@@ -45,7 +44,6 @@
   .header h1 span { background: linear-gradient(135deg, var(--accent), #fbbf24); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
   .header .subtitle { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
 
-  /* 添加地址 */
   .add-addr-box {
     display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
   }
@@ -79,22 +77,13 @@
 
   .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 28px; }
   @media (max-width: 768px) { .chart-row { grid-template-columns: 1fr; } }
-  .chart-container {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 12px; padding: 20px;
-  }
+  .chart-container { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
   .chart-container h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
 
-  .recent-box {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 12px; padding: 20px; margin-bottom: 28px;
-  }
+  .recent-box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 28px; }
   .recent-box h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
 
-  .whale-card {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 12px; margin-bottom: 16px; overflow: hidden;
-  }
+  .whale-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 16px; overflow: hidden; }
   .whale-header {
     display: flex; justify-content: space-between; align-items: center;
     padding: 16px 20px; cursor: pointer;
@@ -110,27 +99,18 @@
     font-weight: 700; font-size: 14px; color: var(--accent);
   }
   .whale-header .addr { font-family: monospace; font-size: 13px; word-break: break-all; }
-  .whale-header .new-badge {
-    background: var(--green); color: #000; font-size: 10px;
-    padding: 2px 6px; border-radius: 4px; font-weight: 600;
-  }
   .whale-header .stats { display: flex; gap: 20px; }
   .whale-header .stat { text-align: center; }
   .whale-header .stat .num { font-weight: 700; font-size: 16px; }
   .whale-header .stat .lbl { font-size: 11px; color: var(--text-secondary); }
   .whale-header .arrow { color: var(--text-secondary); font-size: 18px; transition: transform 0.2s; }
   .whale-header.collapsed .arrow { transform: rotate(-90deg); }
+  .whale-header .fetching { font-size: 11px; color: var(--accent); }
   .whale-body { padding: 20px; }
   .whale-body.hidden { display: none; }
-  .whale-body .scanning { text-align: center; padding: 30px; color: var(--text-secondary); }
 
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th {
-    text-align: left; padding: 10px 12px;
-    color: var(--text-secondary); font-weight: 500;
-    border-bottom: 1px solid var(--border);
-    font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
-  }
+  th { text-align: left; padding: 10px 12px; color: var(--text-secondary); font-weight: 500; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
   td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
   tr:last-child td { border-bottom: none; }
   tr:hover td { background: rgba(255,255,255,0.02); }
@@ -142,25 +122,14 @@
 
   .footer { text-align: center; padding: 24px 0; font-size: 12px; color: var(--text-secondary); }
   .loading { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
-  .loading .spinner {
-    width: 32px; height: 32px; border: 3px solid var(--border);
-    border-top-color: var(--accent); border-radius: 50%;
-    animation: spin 0.8s linear infinite; margin: 0 auto 12px;
-  }
+  .loading .spinner { width: 32px; height: 32px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
   @keyframes spin { to { transform: rotate(360deg); } }
-
-  .addr-tag {
-    display: inline-flex; align-items: center; gap: 4px;
-    background: var(--accent-dim); color: var(--accent);
-    font-size: 11px; padding: 2px 8px; border-radius: 10px;
-    font-family: monospace;
-  }
 </style>
 </head>
 <body>
 <div class="container">
   <div class="status-bar">
-    <div><span class="dot" id="statusDot"></span> <span id="statusText">加载中...</span> <span id="syncInfo" style="color:var(--text-secondary);margin-left:8px;"></span></div>
+    <div><span class="dot" id="statusDot"></span> <span id="statusText">加载中...</span></div>
     <div id="recordInfo">-</div>
     <div id="updateTime">-</div>
   </div>
@@ -174,7 +143,7 @@
       </div>
     </div>
     <div class="add-addr-box">
-      <input type="text" id="addrInput" placeholder="输入地址 0x..." spellcheck="false">
+      <input type="text" id="addrInput" placeholder="输入狗大户地址 0x..." spellcheck="false">
       <button id="addBtn" onclick="addAddress()">➕ 添加监控</button>
       <span id="addMsg" class="msg"></span>
     </div>
@@ -199,7 +168,7 @@
     <div id="whaleDetails"></div>
   </div>
 
-  <div class="footer">数据来源: BSC RPC · 自动更新: 每5分钟</div>
+  <div class="footer">数据来源: BSCScan · 自动更新: 每5分钟</div>
 </div>
 
 <script>
@@ -212,28 +181,23 @@ function fmt(v) { return parseFloat(v).toLocaleString(undefined, {maximumFractio
 let transfers = [];
 let whaleStats = {};
 let charts = {};
-let lastMaxBlock = 0;
-let dynamicProgress = {};
-let scanningTimers = {};
 
 function getWhaleData(addr) {
-  return transfers.filter(t => t.to.toLowerCase() === addr.toLowerCase());
+  return transfers.filter(t => t.to.toLowerCase() === addr.toLowerCase() && t.txHash !== 'placeholder');
 }
 
 async function loadData() {
   try {
-    const url = lastMaxBlock > 0 ? `/api/transfers?from=${lastMaxBlock}` : '/api/transfers';
-    const resp = await fetch(url);
+    const resp = await fetch('/api/transfers');
     const data = await resp.json();
-    if (data.error) { throw new Error(data.error); }
+    if (data.error) throw new Error(data.error);
     transfers = data.transfers || [];
     whaleStats = data.whaleStats || {};
-    dynamicProgress = data.dynamicProgress || {};
     
     document.getElementById('loadingScreen').style.display = 'none';
     document.getElementById('dashboard').style.display = 'block';
     document.getElementById('statusDot').className = 'dot online';
-    document.getElementById('statusText').textContent = '已更新';
+    document.getElementById('statusText').textContent = '已连接';
     render(data);
   } catch(e) {
     document.getElementById('statusDot').className = 'dot offline';
@@ -243,29 +207,23 @@ async function loadData() {
 }
 
 function render(data) {
-  if (data.maxBlock && data.maxBlock > lastMaxBlock) lastMaxBlock = data.maxBlock;
   const now = new Date();
   document.getElementById('updateTime').textContent = '更新: ' + now.toLocaleString('zh-CN');
-  
-  const syncPct = data.pct !== undefined ? data.pct : 
-    (data.currentBlock ? Math.min(100, Math.round((data.maxBlock - 33500000) / (data.currentBlock - 33500000) * 100)) : 0);
-  document.getElementById('syncInfo').textContent = data.synced ? '已同步 ✓' : `区块同步 ${syncPct}%`;
-  document.getElementById('recordInfo').textContent = `数据: ${transfers.length} 条 | 区块: ${data.maxBlock?.toLocaleString() || '-'} | 监控: ${Object.keys(whaleStats).length} 个地址`;
-  
+  document.getElementById('recordInfo').textContent = `数据: ${data.totalCount || 0} 条 | 监控: ${Object.keys(whaleStats).length} 个地址`;
   renderSummary();
   renderCharts();
   renderRecent();
   renderWhaleDetails();
-  updateScanningProgress();
 }
 
 function renderSummary() {
-  const totalAmount = transfers.reduce((s, t) => s + parseFloat(t.value), 0);
+  const realTransfers = transfers.filter(t => t.txHash !== 'placeholder');
+  const totalAmount = realTransfers.reduce((s, t) => s + parseFloat(t.value), 0);
   const addrCount = Object.keys(whaleStats).length;
-  const latest = transfers.length > 0 ? transfers[0].timestamp.slice(0,16).replace('T',' ') : '-';
+  const latest = realTransfers.length > 0 ? realTransfers[0].timestamp.slice(0,16).replace('T',' ') : '-';
   document.getElementById('summaryGrid').innerHTML = [
     { label: '监控地址', value: addrCount, detail: '狗大户' },
-    { label: '总转入笔数', value: transfers.length, detail: '从奖金池转入' },
+    { label: '总转入笔数', value: realTransfers.length, detail: '从奖金池转入' },
     { label: '总转入 ARK', value: totalAmount.toLocaleString(undefined, {maximumFractionDigits:2}), detail: '' },
     { label: '最近转入', value: latest, detail: '最新一笔' },
   ].map(c => `<div class="summary-card"><div class="label">${c.label}</div><div class="value">${c.value}</div><div class="detail">${c.detail}</div></div>`).join('');
@@ -273,6 +231,7 @@ function renderSummary() {
 
 function renderCharts() {
   Object.values(charts).forEach(c => { try { c.destroy(); } catch(e) {} });
+  const realTransfers = transfers.filter(t => t.txHash !== 'placeholder');
   
   const addrs = Object.keys(whaleStats);
   const labels = addrs.map(shortAddr);
@@ -285,7 +244,7 @@ function renderCharts() {
   });
   
   const dailyMap = {};
-  transfers.forEach(t => { const d = t.timestamp.slice(0,10); dailyMap[d] = (dailyMap[d] || 0) + parseFloat(t.value); });
+  realTransfers.forEach(t => { const d = t.timestamp.slice(0,10); dailyMap[d] = (dailyMap[d] || 0) + parseFloat(t.value); });
   const days = Object.keys(dailyMap).sort();
   const amounts = days.map(d => dailyMap[d]);
   
@@ -297,7 +256,8 @@ function renderCharts() {
 }
 
 function renderRecent() {
-  const recent = [...transfers].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 20);
+  const realTransfers = transfers.filter(t => t.txHash !== 'placeholder');
+  const recent = [...realTransfers].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 20);
   document.getElementById('recentCount').textContent = '(最近 20 笔)';
   document.getElementById('recentTable').innerHTML =
     '<table><thead><tr><th>时间</th><th>Tx Hash</th><th>接收地址</th><th>数量(ARK)</th></tr></thead><tbody>' +
@@ -312,47 +272,14 @@ function renderWhaleDetails() {
   container.innerHTML = addrs.map((addr, idx) => {
     const records = getWhaleData(addr).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
     const st = whaleStats[addr] || { count: 0, total: 0 };
-    const prog = dynamicProgress[addr];
+    const isPlaceholder = transfers.some(t => t.to.toLowerCase() === addr && t.txHash === 'placeholder');
     
     const rows = records.map(t => `<tr><td class="timestamp">${t.timestamp.slice(0,16).replace('T',' ')}</td><td class="tx-hash"><a href="${txLink(t.txHash)}" target="_blank">${t.txHash.slice(0,16)}...</a></td><td class="amount">${fmt(t.value)}</td></tr>`).join('');
     const collapsed = idx > 0 ? ' collapsed' : '';
     const hidden = idx > 0 ? ' hidden' : '';
     
-    // 扫描中状态
-    let scanningHtml = '';
-    if (prog && prog.status === 'scanning') {
-      scanningHtml = `<div class="scanning">🔍 正在扫描链上数据 ${prog.pct || 0}%... 已发现 ${prog.scanned || 0} 笔</div>`;
-    } else if (prog && prog.status === 'completed') {
-      scanningHtml = `<div class="scanning" style="color:var(--green)">✅ 扫描完成! 共发现 ${prog.found} 笔, ${prog.totalARK?.toFixed(2) || 0} ARK</div>`;
-    }
-    
-    return `<div class="whale-card"><div class="whale-header${collapsed}" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('hidden')"><div class="left"><div class="avatar">#${idx + 1}</div><div><div class="addr">${addr}</div></div></div><div class="stats"><div class="stat"><div class="num">${st.count || 0}</div><div class="lbl">笔数</div></div><div class="stat"><div class="num" style="color:var(--green)">${fmt(st.total || 0)}</div><div class="lbl">ARK</div></div></div><div class="arrow">▼</div></div><div class="whale-body${hidden}">${scanningHtml}${records.length === 0 ? '<div style="color:var(--text-secondary);text-align:center;padding:20px;">暂无记录</div>' : '<table><thead><tr><th>时间</th><th>Tx Hash</th><th>数量(ARK)</th></tr></thead><tbody>' + rows + '</tbody></table>'}</div></div>`;
+    return `<div class="whale-card"><div class="whale-header${collapsed}" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('hidden')"><div class="left"><div class="avatar">#${idx + 1}</div><div><div class="addr">${addr}</div>${isPlaceholder ? '<span class="fetching">🔍 正在爬取BSCScan...</span>' : ''}</div></div><div class="stats"><div class="stat"><div class="num">${st.count || 0}</div><div class="lbl">笔数</div></div><div class="stat"><div class="num" style="color:var(--green)">${fmt(st.total || 0)}</div><div class="lbl">ARK</div></div></div><div class="arrow">▼</div></div><div class="whale-body${hidden}">${isPlaceholder ? '<div style="color:var(--accent);text-align:center;padding:20px;">🔍 正在从BSCScan爬取转入记录...</div>' : (records.length === 0 ? '<div style="color:var(--text-secondary);text-align:center;padding:20px;">暂无从奖金池转入的记录</div>' : '<table><thead><tr><th>时间</th><th>Tx Hash</th><th>数量(ARK)</th></tr></thead><tbody>' + rows + '</tbody></table>')}</div></div>`;
   }).join('');
-}
-
-function updateScanningProgress() {
-  for (const [addr, prog] of Object.entries(dynamicProgress)) {
-    if (prog.status === 'scanning') {
-      // 每3秒查一次进度
-      if (!scanningTimers[addr]) {
-        scanningTimers[addr] = setInterval(async () => {
-          try {
-            const resp = await fetch(`/api/transfers?action=progress&address=${addr}`);
-            const data = await resp.json();
-            if (data.progress) {
-              dynamicProgress[addr] = data.progress;
-              if (data.progress.status === 'completed') {
-                clearInterval(scanningTimers[addr]);
-                delete scanningTimers[addr];
-                loadData(); // 刷新数据
-              }
-              renderWhaleDetails();
-            }
-          } catch(e) {}
-        }, 3000);
-      }
-    }
-  }
 }
 
 async function addAddress() {
@@ -367,31 +294,50 @@ async function addAddress() {
   }
   
   btn.disabled = true;
-  msg.textContent = '正在添加并扫描...';
+  msg.textContent = '正在添加...';
   
   try {
-    const resp = await fetch(`/api/transfers?action=add&address=${addr}`);
-    const data = await resp.json();
+    // 1. 先添加到列表
+    const resp1 = await fetch(`/api/transfers?action=add&address=${addr}`);
+    const data1 = await resp1.json();
     
-    if (data.error) {
-      msg.textContent = '❌ ' + data.error;
-    } else if (data.message === '地址已存在') {
+    if (data1.message === '地址已存在') {
       msg.textContent = '⚠️ 该地址已在监控中';
-    } else {
-      msg.textContent = `✅ 开始扫描: ${data.address.slice(0,10)}...`;
-      input.value = '';
-      // 延迟刷新页面显示扫描进度
-      setTimeout(() => loadData(), 1000);
+      btn.disabled = false;
+      return;
     }
+    
+    msg.textContent = '✅ 已添加, 正在爬取BSCScan数据...';
+    
+    // 2. 触发爬取
+    await fetch(`/api/transfers?action=fetch&address=${addr}`);
+    
+    // 3. 每3秒刷新一次等数据回来
+    let retry = 0;
+    const checkData = setInterval(async () => {
+      retry++;
+      await loadData();
+      const hasData = transfers.some(t => t.to.toLowerCase() === addr && t.txHash !== 'placeholder');
+      if (hasData || retry > 20) {
+        clearInterval(checkData);
+        if (hasData) {
+          msg.textContent = `✅ 完成! 共 ${transfers.filter(t => t.to.toLowerCase() === addr && t.txHash !== 'placeholder').length} 条记录`;
+        } else {
+          msg.textContent = '⚠️ 未找到从奖金池转入的记录';
+        }
+        btn.disabled = false;
+        setTimeout(() => { msg.textContent = ''; }, 5000);
+      }
+    }, 3000);
+    
+    input.value = '';
+    
   } catch(e) {
-    msg.textContent = '❌ 请求失败: ' + e.message;
+    msg.textContent = '❌ 失败: ' + e.message;
+    btn.disabled = false;
   }
-  
-  btn.disabled = false;
-  setTimeout(() => { msg.textContent = ''; }, 5000);
 }
 
-// 回车添加
 document.getElementById('addrInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') addAddress();
 });
