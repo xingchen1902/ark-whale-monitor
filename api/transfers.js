@@ -14,103 +14,108 @@ const WHALE_ADDRESSES = [
   '0x92F156Ce030CD3e0Ea999d7cB6adf62B480E63cc',
 ];
 
-// 全局状态（Vercel 冷启动会重置，所以用 latestBlock 做增量）
+// 初始数据
+const initialMaxBlock = Math.max(...initialTransfers.map(t => t.blockNumber));
 let transfers = [...initialTransfers];
-let maxBlock = Math.max(...transfers.map(t => t.blockNumber));
-let lastUpdateTime = 0;
+let maxBlock = initialMaxBlock;
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'no-cache');
   
-  const now = Date.now();
+  // 支持从 URL 参数传入已扫到的区块，避免冷启动重复扫描
+  const fromBlockParam = parseInt(req.query.from) || 0;
+  if (fromBlockParam > maxBlock) {
+    maxBlock = fromBlockParam;
+  }
   
   try {
     const provider = new ethers.providers.JsonRpcProvider({ url: RPC_URL, timeout: 30000 });
     const currentBlock = await provider.getBlockNumber();
     
-    // 每次最多扫 200000 个区块（约5分钟，在超时限制内）
-    const BATCH_SIZE = 200000;
-    const fromBlock = Math.min(maxBlock + 1, currentBlock);
-    let toBlock = Math.min(fromBlock + BATCH_SIZE - 1, currentBlock);
+    if (maxBlock >= currentBlock) {
+      return res.json({
+        transfers,
+        totalCount: transfers.length,
+        maxBlock,
+        currentBlock,
+        remaining: 0,
+        newRecords: 0,
+        synced: true,
+      });
+    }
     
-    let scannedCount = 0;
-    let newRecords = 0;
+    // 每次扫 300000 个区块
+    const BATCH_SIZE = 300000;
+    const startBlock = maxBlock + 1;
+    const endBlock = Math.min(startBlock + BATCH_SIZE - 1, currentBlock);
+    
     const seenHashes = new Set(transfers.map(t => t.txHash));
+    let newRecords = [];
     
-    while (fromBlock + scannedCount * BATCH_SIZE <= currentBlock) {
-      const batchFrom = Math.min(fromBlock + scannedCount * BATCH_SIZE, currentBlock);
-      const batchTo = Math.min(batchFrom + BATCH_SIZE - 1, currentBlock);
-      
-      if (batchFrom > batchTo) break;
-      
-      for (const whaleAddr of WHALE_ADDRESSES) {
-        const whaleTopic = '0x000000000000000000000000' + whaleAddr.slice(2).toLowerCase();
-        try {
-          const logs = await provider.getLogs({
-            address: ARK_CONTRACT,
-            topics: [TRANSFER_TOPIC, POOL_TOPIC, whaleTopic],
-            fromBlock: batchFrom,
-            toBlock: batchTo,
+    for (const whaleAddr of WHALE_ADDRESSES) {
+      const whaleTopic = '0x000000000000000000000000' + whaleAddr.slice(2).toLowerCase();
+      try {
+        const logs = await provider.getLogs({
+          address: ARK_CONTRACT,
+          topics: [TRANSFER_TOPIC, POOL_TOPIC, whaleTopic],
+          fromBlock: startBlock,
+          toBlock: endBlock,
+        });
+        for (const l of logs) {
+          if (seenHashes.has(l.transactionHash)) continue;
+          seenHashes.add(l.transactionHash);
+          let timestamp;
+          try {
+            const block = await provider.getBlock(l.blockNumber);
+            timestamp = new Date(block.timestamp * 1000).toISOString();
+          } catch(e) {
+            timestamp = new Date().toISOString();
+          }
+          newRecords.push({
+            txHash: l.transactionHash,
+            blockNumber: l.blockNumber,
+            timestamp,
+            from: POOL_ADDRESS,
+            to: whaleAddr,
+            value: ethers.utils.formatUnits(l.data, 18),
           });
-          for (const l of logs) {
-            if (seenHashes.has(l.transactionHash)) continue;
-            seenHashes.add(l.transactionHash);
-            let timestamp;
-            try {
-              const block = await provider.getBlock(l.blockNumber);
-              timestamp = new Date(block.timestamp * 1000).toISOString();
-            } catch(e) {
-              timestamp = new Date().toISOString();
-            }
-            transfers.push({
-              txHash: l.transactionHash,
-              blockNumber: l.blockNumber,
-              timestamp,
-              from: POOL_ADDRESS,
-              to: whaleAddr,
-              value: ethers.utils.formatUnits(l.data, 18),
-            });
-            newRecords++;
-          }
-        } catch(e) {
-          // 超时或错误就停止
-          if (e.message.includes('timeout') || e.code === 'SERVER_ERROR') {
-            toBlock = batchFrom;
-            break;
-          }
+        }
+      } catch(e) {
+        if (e.message.includes('out of requests')) {
+          // RPC 限流，返回已找到的数据
+          break;
         }
       }
-      
-      scannedCount++;
-      
-      // 如果已经接近超时了就停止
-      if (Date.now() - now > 45000) break;
     }
     
-    // 更新 maxBlock
-    if (toBlock > maxBlock) {
-      maxBlock = toBlock;
-    }
-    
-    if (newRecords > 0) {
+    if (newRecords.length > 0) {
+      transfers = [...newRecords, ...transfers];
       transfers.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
     }
     
-    lastUpdateTime = now;
+    maxBlock = endBlock;
+    
+    const remaining = currentBlock - maxBlock;
+    const pct = Math.round((maxBlock - 33500000) / (currentBlock - 33500000) * 100);
     
     res.json({
       transfers,
       totalCount: transfers.length,
       maxBlock,
       currentBlock,
-      remaining: currentBlock - maxBlock,
-      newRecords,
-      updatedAt: new Date(lastUpdateTime).toISOString(),
+      remaining,
+      pct: Math.min(100, pct),
+      newRecords: newRecords.length,
+      synced: remaining <= 0,
     });
     
   } catch(e) {
-    console.error('Error:', e.message);
-    res.status(500).json({ error: e.message, totalCount: transfers.length });
+    res.json({
+      transfers,
+      totalCount: transfers.length,
+      maxBlock,
+      error: e.message,
+    });
   }
 };

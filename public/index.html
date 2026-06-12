@@ -194,9 +194,12 @@ function getWhaleData(addr) {
   return transfers.filter(t => t.to.toLowerCase() === addr.toLowerCase());
 }
 
+let lastMaxBlock = 0;
+
 async function loadData() {
   try {
-    const resp = await fetch('/api/transfers');
+    const url = lastMaxBlock > 0 ? `/api/transfers?from=${lastMaxBlock}` : '/api/transfers';
+    const resp = await fetch(url);
     const data = await resp.json();
     transfers = data.transfers || [];
     document.getElementById('loadingScreen').style.display = 'none';
@@ -212,6 +215,7 @@ async function loadData() {
 }
 
 function render(data) {
+  if (data.maxBlock && data.maxBlock > lastMaxBlock) lastMaxBlock = data.maxBlock;
   const now = new Date();
   document.getElementById('updateTime').textContent = '更新: ' + now.toLocaleString('zh-CN');
   document.getElementById('recordInfo').textContent = 
