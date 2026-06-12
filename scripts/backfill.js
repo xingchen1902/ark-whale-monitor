@@ -7,7 +7,7 @@ const { ethers } = require('ethers');
 const fs = require('fs');
 const path = require('path');
 
-const RPC_URL = 'https://bsc-mainnet.nodereal.io/v1/7b7adb4899124647867575e354005c07';
+const RPC_URL = 'https://bsc-mainnet.nodereal.io/v1/fdc3ae39b7b845669e15f730ecf71475';
 const RPC_FALLBACK = 'https://bsc-dataseed.binance.org/';
 
 const ARK_CONTRACT = ethers.utils.getAddress('0xCae117ca6Bc8A341D2E7207F30E180f0e5618B9D');
