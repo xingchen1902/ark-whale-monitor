@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARK 狗大户奖金池转入监控</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d28;
+    --card-hover: #212433;
+    --border: #2a2d3a;
+    --text: #e4e6f0;
+    --text-secondary: #8b8fa3;
+    --accent: #f7931a;
+    --green: #22c55e;
+    --blue: #3b82f6;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 20px;
+  }
+  .container { max-width: 1400px; margin: 0 auto; }
+
+  .status-bar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 16px; background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; margin-bottom: 20px; font-size: 12px;
+  }
+  .status-bar .dot {
+    width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px;
+  }
+  .status-bar .dot.connected { background: #22c55e; }
+  .status-bar .dot.disconnected { background: #ef4444; }
+
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 20px 0; border-bottom: 1px solid var(--border); margin-bottom: 24px;
+  }
+  .header h1 { font-size: 22px; font-weight: 700; }
+  .header h1 span { background: linear-gradient(135deg, var(--accent), #fbbf24); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .header .subtitle { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+
+  .summary-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px; margin-bottom: 28px;
+  }
+  .summary-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px;
+  }
+  .summary-card .label { font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
+  .summary-card .value { font-size: 24px; font-weight: 700; margin: 6px 0; }
+  .summary-card .detail { font-size: 12px; color: var(--text-secondary); }
+
+  .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 28px; }
+  @media (max-width: 768px) { .chart-row { grid-template-columns: 1fr; } }
+  .chart-container {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px;
+  }
+  .chart-container h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+
+  .recent-box {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; margin-bottom: 28px;
+  }
+  .recent-box h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+
+  .whale-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; margin-bottom: 16px; overflow: hidden;
+  }
+  .whale-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 16px 20px; cursor: pointer;
+    background: linear-gradient(135deg, var(--card), var(--card-hover));
+    border-bottom: 1px solid var(--border);
+  }
+  .whale-header:hover { background: var(--card-hover); }
+  .whale-header .left { display: flex; align-items: center; gap: 12px; }
+  .whale-header .avatar {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: rgba(247,147,26,0.15);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px; color: var(--accent);
+  }
+  .whale-header .addr { font-family: monospace; font-size: 13px; }
+  .whale-header .stats { display: flex; gap: 20px; }
+  .whale-header .stat { text-align: center; }
+  .whale-header .stat .num { font-weight: 700; font-size: 16px; }
+  .whale-header .stat .lbl { font-size: 11px; color: var(--text-secondary); }
+  .whale-header .arrow { color: var(--text-secondary); font-size: 18px; transition: transform 0.2s; }
+  .whale-header.collapsed .arrow { transform: rotate(-90deg); }
+  .whale-body { padding: 20px; }
+  .whale-body.hidden { display: none; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left; padding: 10px 12px;
+    color: var(--text-secondary); font-weight: 500;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  .tx-hash { font-family: monospace; font-size: 12px; }
+  .tx-hash a { color: var(--blue); text-decoration: none; }
+  .tx-hash a:hover { text-decoration: underline; }
+  .amount { font-weight: 600; color: var(--green); }
+  .timestamp { font-size: 12px; color: var(--text-secondary); }
+  .new-badge {
+    display: inline-block; background: var(--green); color: #000;
+    font-size: 10px; padding: 1px 6px; border-radius: 4px;
+    font-weight: 600; margin-left: 6px;
+  }
+
+  .footer { text-align: center; padding: 24px 0; font-size: 12px; color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="status-bar">
+    <div><span class="dot disconnected" id="statusDot"></span> <span id="statusText">连接中...</span></div>
+    <div>监控数据: <span id="recordCount">-</span> 条 | 最后区块: <span id="lastBlock">-</span></div>
+    <div id="updateTime">-</div>
+  </div>
+
+  <div class="header">
+    <div>
+      <h1>🏴 <span>ARK 奖金池 → 狗大户</span> 转入监控</h1>
+      <div class="subtitle">
+        代币: <code style="font-size:11px;color:var(--accent);">0xCae117ca6Bc8...8f6910</code>
+        &nbsp;·&nbsp; 奖金池: <code style="font-size:11px;color:var(--accent);">0x8501...5BD4</code>
+        &nbsp;·&nbsp; 每小时自动更新
+      </div>
+    </div>
+  </div>
+
+  <div class="summary-grid" id="summaryGrid"></div>
+
+  <div class="chart-row">
+    <div class="chart-container"><h3>📊 各地址累计接收 ARK</h3><canvas id="chartTotal"></canvas></div>
+    <div class="chart-container"><h3>📈 每日转入趋势</h3><canvas id="chartTimeline"></canvas></div>
+  </div>
+
+  <div class="recent-box">
+    <h3>🕐 最近转入 <span style="font-size:12px;font-weight:400;color:var(--text-secondary);" id="recentCount"></span></h3>
+    <div id="recentTable"></div>
+  </div>
+
+  <h2 style="font-size:17px;font-weight:600;margin:24px 0 16px;">📋 各地址详细记录</h2>
+  <div id="whaleDetails"></div>
+
+  <div class="footer">数据来源: BSC RPC · 自动更新: 每小时 · 实时推送: WebSocket</div>
+</div>
+
+<script>
+// ====== BSCScan links ======
+const BSC_URL = 'https://bscscan.com';
+function txLink(h) { return BSC_URL + '/tx/' + h; }
+function addrLink(a) { return BSC_URL + '/address/' + a; }
+function shortAddr(a) { return a.slice(0,10) + '...' + a.slice(-6); }
+function formatAmount(v) { return parseFloat(v).toLocaleString(undefined, {maximumFractionDigits:4}); }
+
+// ====== State ======
+let transfers = [];
+const WHALE_ADDRESSES = [
+  '0xc2309bb33EFF8fB0A1a22435bB63844D320B130D',
+  '0x8e5E761EAF35c8bc7a4F359A44EA2D255E25e052',
+  '0xc6C6C5A8C629eAb947Eb610FB8B0936102ebA0AD',
+  '0xd47b1565a31915e29B42a3948C1dCEc0f0e01d2A',
+  '0x92F156Ce030CD3e0Ea999d7cB6adf62B480E63cc',
+];
+
+// ====== WebSocket ======
+let ws;
+
+function connectWS() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(protocol + '//' + location.host);
+  
+  ws.onopen = () => {
+    document.getElementById('statusDot').className = 'dot connected';
+    document.getElementById('statusText').textContent = '已连接';
+  };
+  
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'full_data') {
+      transfers = data.transfers || [];
+      render();
+    } else if (data.type === 'new_transfers') {
+      // 追加新记录并重新渲染
+      transfers = transfers.concat(data.records);
+      transfers.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      render();
+      // 高亮新记录
+      highlightNew(data.records);
+    }
+  };
+  
+  ws.onclose = () => {
+    document.getElementById('statusDot').className = 'dot disconnected';
+    document.getElementById('statusText').textContent = '已断线, 3秒后重连...';
+    setTimeout(connectWS, 3000);
+  };
+  
+  ws.onerror = () => { ws.close(); };
+}
+
+function highlightNew(records) {
+  // 简单提示
+  if (records.length > 0) {
+    document.getElementById('statusText').textContent = `刚刚收到 ${records.length} 条新转账!`;
+    setTimeout(() => {
+      document.getElementById('statusText').textContent = '已连接';
+    }, 5000);
+  }
+}
+
+// ====== Render ======
+let charts = {};
+
+function render() {
+  const now = new Date();
+  document.getElementById('updateTime').textContent = '更新: ' + now.toLocaleString('zh-CN');
+  document.getElementById('recordCount').textContent = transfers.length;
+  
+  renderSummary();
+  renderCharts();
+  renderRecent();
+  renderWhaleDetails();
+}
+
+function getWhaleData(addr) {
+  return transfers.filter(t => t.to.toLowerCase() === addr.toLowerCase());
+}
+
+// ====== Summary ======
+function renderSummary() {
+  const totalAmount = transfers.reduce((s, t) => s + parseFloat(t.value), 0);
+  const latest = transfers.length > 0 ? transfers[0].timestamp.slice(0,16).replace('T',' ') : '-';
+  
+  document.getElementById('summaryGrid').innerHTML = [
+    { label: '监控地址', value: WHALE_ADDRESSES.length, detail: '狗大户' },
+    { label: '总转入笔数', value: transfers.length, detail: '从奖金池转入' },
+    { label: '总转入 ARK', value: totalAmount.toLocaleString(undefined, {maximumFractionDigits:2}), detail: '' },
+    { label: '最近转入', value: latest, detail: '最新一笔' },
+  ].map(c => `<div class="summary-card"><div class="label">${c.label}</div><div class="value">${c.value}</div><div class="detail">${c.detail}</div></div>`).join('');
+}
+
+// ====== Charts ======
+function renderCharts() {
+  // Destroy existing
+  Object.values(charts).forEach(c => { try { c.destroy(); } catch(e) {} });
+  
+  const labels = WHALE_ADDRESSES.map(a => shortAddr(a));
+  const totals = WHALE_ADDRESSES.map(a => {
+    return getWhaleData(a).reduce((s, t) => s + parseFloat(t.value), 0);
+  });
+  
+  charts.total = new Chart(document.getElementById('chartTotal'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'ARK 累计',
+        data: totals,
+        backgroundColor: '#f7931a88',
+        borderColor: '#f7931a',
+        borderWidth: 1.5,
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { labels: { color: '#8b8fa3' } } },
+      scales: {
+        x: { ticks: { color: '#8b8fa3', maxRotation: 45 } },
+        y: { ticks: { color: '#8b8fa3' }, grid: { color: '#2a2d3a44' } },
+      },
+    },
+  });
+  
+  // Timeline
+  const dailyMap = {};
+  transfers.forEach(t => {
+    const day = t.timestamp.slice(0, 10);
+    dailyMap[day] = (dailyMap[day] || 0) + parseFloat(t.value);
+  });
+  const days = Object.keys(dailyMap).sort();
+  const amounts = days.map(d => dailyMap[d]);
+  
+  charts.timeline = new Chart(document.getElementById('chartTimeline'), {
+    type: 'line',
+    data: {
+      labels: days,
+      datasets: [{
+        label: 'ARK 转入量',
+        data: amounts,
+        borderColor: '#22c55e',
+        backgroundColor: '#22c55e22',
+        fill: true,
+        tension: 0.3,
+        pointBackgroundColor: '#22c55e',
+        pointRadius: 4,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { labels: { color: '#8b8fa3' } } },
+      scales: {
+        x: { ticks: { color: '#8b8fa3' } },
+        y: { ticks: { color: '#8b8fa3' }, grid: { color: '#2a2d3a44' } },
+      },
+    },
+  });
+}
+
+// ====== Recent ======
+function renderRecent() {
+  const recent = [...transfers].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 20);
+  document.getElementById('recentCount').textContent = `(最近 20 笔)`;
+  
+  document.getElementById('recentTable').innerHTML =
+    '<table><thead><tr><th>时间</th><th>Tx Hash</th><th>接收地址</th><th>数量(ARK)</th></tr></thead><tbody>' +
+    recent.map(t => `<tr>
+      <td class="timestamp">${t.timestamp.slice(0,16).replace('T',' ')}</td>
+      <td class="tx-hash"><a href="${txLink(t.txHash)}" target="_blank">${t.txHash.slice(0,16)}...</a></td>
+      <td class="tx-hash"><a href="${addrLink(t.to)}" target="_blank">${shortAddr(t.to)}</a></td>
+      <td class="amount">${formatAmount(t.value)}</td>
+    </tr>`).join('') +
+    '</tbody></table>';
+}
+
+// ====== Whale Details ======
+function renderWhaleDetails() {
+  const container = document.getElementById('whaleDetails');
+  container.innerHTML = WHALE_ADDRESSES.map((addr, idx) => {
+    const records = getWhaleData(addr).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    const total = records.reduce((s, t) => s + parseFloat(t.value), 0);
+    
+    const rows = records.map(t => `<tr>
+      <td class="timestamp">${t.timestamp.slice(0,16).replace('T',' ')}</td>
+      <td class="tx-hash"><a href="${txLink(t.txHash)}" target="_blank">${t.txHash.slice(0,16)}...</a></td>
+      <td class="amount">${formatAmount(t.value)}</td>
+      <td class="tx-hash"><a href="${addrLink(t.from)}" target="_blank" style="color:var(--text-secondary);font-size:11px;">奖金池</a></td>
+    </tr>`).join('');
+    
+    const collapsed = idx > 0 ? ' collapsed' : '';
+    const hidden = idx > 0 ? ' hidden' : '';
+    
+    return `<div class="whale-card">
+      <div class="whale-header${collapsed}" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('hidden')">
+        <div class="left">
+          <div class="avatar">#${idx + 1}</div>
+          <div><div class="addr">${addr}</div></div>
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="num">${records.length}</div><div class="lbl">笔数</div></div>
+          <div class="stat"><div class="num" style="color:var(--green)">${formatAmount(total)}</div><div class="lbl">ARK 累计</div></div>
+        </div>
+        <div class="arrow">▼</div>
+      </div>
+      <div class="whale-body${hidden}">
+        ${records.length === 0 ? '<div style="color:var(--text-secondary);text-align:center;padding:20px;">暂无记录</div>' :
+        '<table><thead><tr><th>时间</th><th>Tx Hash</th><th>数量(ARK)</th><th>来源</th></tr></thead><tbody>' + rows + '</tbody></table>'}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ====== Init ======
+connectWS();
+</script>
+</body>
+</html>

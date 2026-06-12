@@ -1,0 +1,15 @@
+{
+  "name": "ark-whale-monitor",
+  "version": "1.0.0",
+  "description": "ARK 狗大户奖金池转入监控",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "ethers": "^5.7.2",
+    "express": "^4.21.0",
+    "ws": "^8.18.0"
+  }
+}
