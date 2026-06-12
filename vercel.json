@@ -1,17 +1,11 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "server.js",
-      "use": "@vercel/node"
+  "functions": {
+    "api/transfers.js": {
+      "maxDuration": 60
     },
-    {
-      "src": "public/**",
-      "use": "@vercel/static"
+    "api/stats.js": {
+      "maxDuration": 60
     }
-  ],
-  "routes": [
-    { "src": "/api/(.*)", "dest": "server.js" },
-    { "src": "/(.*)", "dest": "public/$1" }
-  ]
+  }
 }

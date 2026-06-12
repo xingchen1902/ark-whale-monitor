@@ -3,3 +3,4 @@ data/backfill.log
 work/
 outputs/
 .DS_Store
+.vercel

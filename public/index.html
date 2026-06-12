@@ -34,8 +34,8 @@
   .status-bar .dot {
     width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px;
   }
-  .status-bar .dot.connected { background: #22c55e; }
-  .status-bar .dot.disconnected { background: #ef4444; }
+  .status-bar .dot.online { background: #22c55e; }
+  .status-bar .dot.offline { background: #ef4444; }
 
   .header {
     display: flex; justify-content: space-between; align-items: center;
@@ -114,20 +114,25 @@
   .tx-hash a:hover { text-decoration: underline; }
   .amount { font-weight: 600; color: var(--green); }
   .timestamp { font-size: 12px; color: var(--text-secondary); }
-  .new-badge {
-    display: inline-block; background: var(--green); color: #000;
-    font-size: 10px; padding: 1px 6px; border-radius: 4px;
-    font-weight: 600; margin-left: 6px;
-  }
 
   .footer { text-align: center; padding: 24px 0; font-size: 12px; color: var(--text-secondary); }
+
+  .loading {
+    text-align: center; padding: 60px 20px; color: var(--text-secondary);
+  }
+  .loading .spinner {
+    width: 32px; height: 32px; border: 3px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.8s linear infinite; margin: 0 auto 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
 <div class="container">
   <div class="status-bar">
-    <div><span class="dot disconnected" id="statusDot"></span> <span id="statusText">连接中...</span></div>
-    <div>监控数据: <span id="recordCount">-</span> 条 | 最后区块: <span id="lastBlock">-</span></div>
+    <div><span class="dot" id="statusDot"></span> <span id="statusText">加载中...</span></div>
+    <div id="recordInfo">-</div>
     <div id="updateTime">-</div>
   </div>
 
@@ -142,34 +147,38 @@
     </div>
   </div>
 
-  <div class="summary-grid" id="summaryGrid"></div>
-
-  <div class="chart-row">
-    <div class="chart-container"><h3>📊 各地址累计接收 ARK</h3><canvas id="chartTotal"></canvas></div>
-    <div class="chart-container"><h3>📈 每日转入趋势</h3><canvas id="chartTimeline"></canvas></div>
+  <div id="loadingScreen" class="loading">
+    <div class="spinner"></div>
+    <div>正在加载数据...</div>
   </div>
 
-  <div class="recent-box">
-    <h3>🕐 最近转入 <span style="font-size:12px;font-weight:400;color:var(--text-secondary);" id="recentCount"></span></h3>
-    <div id="recentTable"></div>
+  <div id="dashboard" style="display:none">
+    <div class="summary-grid" id="summaryGrid"></div>
+
+    <div class="chart-row">
+      <div class="chart-container"><h3>📊 各地址累计接收 ARK</h3><canvas id="chartTotal"></canvas></div>
+      <div class="chart-container"><h3>📈 每日转入趋势</h3><canvas id="chartTimeline"></canvas></div>
+    </div>
+
+    <div class="recent-box">
+      <h3>🕐 最近转入 <span style="font-size:12px;font-weight:400;color:var(--text-secondary);" id="recentCount"></span></h3>
+      <div id="recentTable"></div>
+    </div>
+
+    <h2 style="font-size:17px;font-weight:600;margin:24px 0 16px;">📋 各地址详细记录</h2>
+    <div id="whaleDetails"></div>
   </div>
 
-  <h2 style="font-size:17px;font-weight:600;margin:24px 0 16px;">📋 各地址详细记录</h2>
-  <div id="whaleDetails"></div>
-
-  <div class="footer">数据来源: BSC RPC · 自动更新: 每小时 · 实时推送: WebSocket</div>
+  <div class="footer">数据来源: BSC RPC · 自动更新: 每小时</div>
 </div>
 
 <script>
-// ====== BSCScan links ======
 const BSC_URL = 'https://bscscan.com';
 function txLink(h) { return BSC_URL + '/tx/' + h; }
 function addrLink(a) { return BSC_URL + '/address/' + a; }
 function shortAddr(a) { return a.slice(0,10) + '...' + a.slice(-6); }
-function formatAmount(v) { return parseFloat(v).toLocaleString(undefined, {maximumFractionDigits:4}); }
+function fmt(v) { return parseFloat(v).toLocaleString(undefined, {maximumFractionDigits:4}); }
 
-// ====== State ======
-let transfers = [];
 const WHALE_ADDRESSES = [
   '0xc2309bb33EFF8fB0A1a22435bB63844D320B130D',
   '0x8e5E761EAF35c8bc7a4F359A44EA2D255E25e052',
@@ -178,59 +187,35 @@ const WHALE_ADDRESSES = [
   '0x92F156Ce030CD3e0Ea999d7cB6adf62B480E63cc',
 ];
 
-// ====== WebSocket ======
-let ws;
+let transfers = [];
+let charts = {};
 
-function connectWS() {
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(protocol + '//' + location.host);
-  
-  ws.onopen = () => {
-    document.getElementById('statusDot').className = 'dot connected';
-    document.getElementById('statusText').textContent = '已连接';
-  };
-  
-  ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if (data.type === 'full_data') {
-      transfers = data.transfers || [];
-      render();
-    } else if (data.type === 'new_transfers') {
-      // 追加新记录并重新渲染
-      transfers = transfers.concat(data.records);
-      transfers.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-      render();
-      // 高亮新记录
-      highlightNew(data.records);
-    }
-  };
-  
-  ws.onclose = () => {
-    document.getElementById('statusDot').className = 'dot disconnected';
-    document.getElementById('statusText').textContent = '已断线, 3秒后重连...';
-    setTimeout(connectWS, 3000);
-  };
-  
-  ws.onerror = () => { ws.close(); };
+function getWhaleData(addr) {
+  return transfers.filter(t => t.to.toLowerCase() === addr.toLowerCase());
 }
 
-function highlightNew(records) {
-  // 简单提示
-  if (records.length > 0) {
-    document.getElementById('statusText').textContent = `刚刚收到 ${records.length} 条新转账!`;
-    setTimeout(() => {
-      document.getElementById('statusText').textContent = '已连接';
-    }, 5000);
+async function loadData() {
+  try {
+    const resp = await fetch('/api/transfers');
+    const data = await resp.json();
+    transfers = data.transfers || [];
+    document.getElementById('loadingScreen').style.display = 'none';
+    document.getElementById('dashboard').style.display = 'block';
+    document.getElementById('statusDot').className = 'dot online';
+    document.getElementById('statusText').textContent = '已更新';
+    render(data);
+  } catch(e) {
+    document.getElementById('statusDot').className = 'dot offline';
+    document.getElementById('statusText').textContent = '加载失败, 30秒后重试';
+    setTimeout(loadData, 30000);
   }
 }
 
-// ====== Render ======
-let charts = {};
-
-function render() {
+function render(data) {
   const now = new Date();
   document.getElementById('updateTime').textContent = '更新: ' + now.toLocaleString('zh-CN');
-  document.getElementById('recordCount').textContent = transfers.length;
+  document.getElementById('recordInfo').textContent = 
+    `数据: ${transfers.length} 条 | 最后区块: ${data.lastFetchedBlock || '-'}`;
   
   renderSummary();
   renderCharts();
@@ -238,15 +223,9 @@ function render() {
   renderWhaleDetails();
 }
 
-function getWhaleData(addr) {
-  return transfers.filter(t => t.to.toLowerCase() === addr.toLowerCase());
-}
-
-// ====== Summary ======
 function renderSummary() {
   const totalAmount = transfers.reduce((s, t) => s + parseFloat(t.value), 0);
   const latest = transfers.length > 0 ? transfers[0].timestamp.slice(0,16).replace('T',' ') : '-';
-  
   document.getElementById('summaryGrid').innerHTML = [
     { label: '监控地址', value: WHALE_ADDRESSES.length, detail: '狗大户' },
     { label: '总转入笔数', value: transfers.length, detail: '从奖金池转入' },
@@ -255,129 +234,53 @@ function renderSummary() {
   ].map(c => `<div class="summary-card"><div class="label">${c.label}</div><div class="value">${c.value}</div><div class="detail">${c.detail}</div></div>`).join('');
 }
 
-// ====== Charts ======
 function renderCharts() {
-  // Destroy existing
   Object.values(charts).forEach(c => { try { c.destroy(); } catch(e) {} });
   
-  const labels = WHALE_ADDRESSES.map(a => shortAddr(a));
-  const totals = WHALE_ADDRESSES.map(a => {
-    return getWhaleData(a).reduce((s, t) => s + parseFloat(t.value), 0);
-  });
+  const labels = WHALE_ADDRESSES.map(shortAddr);
+  const totals = WHALE_ADDRESSES.map(a => getWhaleData(a).reduce((s, t) => s + parseFloat(t.value), 0));
   
   charts.total = new Chart(document.getElementById('chartTotal'), {
     type: 'bar',
-    data: {
-      labels,
-      datasets: [{
-        label: 'ARK 累计',
-        data: totals,
-        backgroundColor: '#f7931a88',
-        borderColor: '#f7931a',
-        borderWidth: 1.5,
-        borderRadius: 4,
-      }],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: true,
-      plugins: { legend: { labels: { color: '#8b8fa3' } } },
-      scales: {
-        x: { ticks: { color: '#8b8fa3', maxRotation: 45 } },
-        y: { ticks: { color: '#8b8fa3' }, grid: { color: '#2a2d3a44' } },
-      },
-    },
+    data: { labels, datasets: [{ label: 'ARK 累计', data: totals, backgroundColor: '#f7931a88', borderColor: '#f7931a', borderWidth: 1.5, borderRadius: 4 }] },
+    options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { labels: { color: '#8b8fa3' } } }, scales: { x: { ticks: { color: '#8b8fa3', maxRotation: 45 } }, y: { ticks: { color: '#8b8fa3' }, grid: { color: '#2a2d3a44' } } } }
   });
   
-  // Timeline
   const dailyMap = {};
-  transfers.forEach(t => {
-    const day = t.timestamp.slice(0, 10);
-    dailyMap[day] = (dailyMap[day] || 0) + parseFloat(t.value);
-  });
+  transfers.forEach(t => { const d = t.timestamp.slice(0,10); dailyMap[d] = (dailyMap[d] || 0) + parseFloat(t.value); });
   const days = Object.keys(dailyMap).sort();
   const amounts = days.map(d => dailyMap[d]);
   
   charts.timeline = new Chart(document.getElementById('chartTimeline'), {
     type: 'line',
-    data: {
-      labels: days,
-      datasets: [{
-        label: 'ARK 转入量',
-        data: amounts,
-        borderColor: '#22c55e',
-        backgroundColor: '#22c55e22',
-        fill: true,
-        tension: 0.3,
-        pointBackgroundColor: '#22c55e',
-        pointRadius: 4,
-      }],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: true,
-      plugins: { legend: { labels: { color: '#8b8fa3' } } },
-      scales: {
-        x: { ticks: { color: '#8b8fa3' } },
-        y: { ticks: { color: '#8b8fa3' }, grid: { color: '#2a2d3a44' } },
-      },
-    },
+    data: { labels: days, datasets: [{ label: 'ARK 转入量', data: amounts, borderColor: '#22c55e', backgroundColor: '#22c55e22', fill: true, tension: 0.3, pointBackgroundColor: '#22c55e', pointRadius: 4 }] },
+    options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { labels: { color: '#8b8fa3' } } }, scales: { x: { ticks: { color: '#8b8fa3' } }, y: { ticks: { color: '#8b8fa3' }, grid: { color: '#2a2d3a44' } } } }
   });
 }
 
-// ====== Recent ======
 function renderRecent() {
   const recent = [...transfers].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 20);
-  document.getElementById('recentCount').textContent = `(最近 20 笔)`;
-  
+  document.getElementById('recentCount').textContent = '(最近 20 笔)';
   document.getElementById('recentTable').innerHTML =
     '<table><thead><tr><th>时间</th><th>Tx Hash</th><th>接收地址</th><th>数量(ARK)</th></tr></thead><tbody>' +
-    recent.map(t => `<tr>
-      <td class="timestamp">${t.timestamp.slice(0,16).replace('T',' ')}</td>
-      <td class="tx-hash"><a href="${txLink(t.txHash)}" target="_blank">${t.txHash.slice(0,16)}...</a></td>
-      <td class="tx-hash"><a href="${addrLink(t.to)}" target="_blank">${shortAddr(t.to)}</a></td>
-      <td class="amount">${formatAmount(t.value)}</td>
-    </tr>`).join('') +
+    recent.map(t => `<tr><td class="timestamp">${t.timestamp.slice(0,16).replace('T',' ')}</td><td class="tx-hash"><a href="${txLink(t.txHash)}" target="_blank">${t.txHash.slice(0,16)}...</a></td><td class="tx-hash"><a href="${addrLink(t.to)}" target="_blank">${shortAddr(t.to)}</a></td><td class="amount">${fmt(t.value)}</td></tr>`).join('') +
     '</tbody></table>';
 }
 
-// ====== Whale Details ======
 function renderWhaleDetails() {
-  const container = document.getElementById('whaleDetails');
-  container.innerHTML = WHALE_ADDRESSES.map((addr, idx) => {
+  document.getElementById('whaleDetails').innerHTML = WHALE_ADDRESSES.map((addr, idx) => {
     const records = getWhaleData(addr).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
     const total = records.reduce((s, t) => s + parseFloat(t.value), 0);
-    
-    const rows = records.map(t => `<tr>
-      <td class="timestamp">${t.timestamp.slice(0,16).replace('T',' ')}</td>
-      <td class="tx-hash"><a href="${txLink(t.txHash)}" target="_blank">${t.txHash.slice(0,16)}...</a></td>
-      <td class="amount">${formatAmount(t.value)}</td>
-      <td class="tx-hash"><a href="${addrLink(t.from)}" target="_blank" style="color:var(--text-secondary);font-size:11px;">奖金池</a></td>
-    </tr>`).join('');
-    
+    const rows = records.map(t => `<tr><td class="timestamp">${t.timestamp.slice(0,16).replace('T',' ')}</td><td class="tx-hash"><a href="${txLink(t.txHash)}" target="_blank">${t.txHash.slice(0,16)}...</a></td><td class="amount">${fmt(t.value)}</td><td class="tx-hash"><a href="${addrLink(t.from)}" target="_blank" style="color:var(--text-secondary);font-size:11px;">奖金池</a></td></tr>`).join('');
     const collapsed = idx > 0 ? ' collapsed' : '';
     const hidden = idx > 0 ? ' hidden' : '';
-    
-    return `<div class="whale-card">
-      <div class="whale-header${collapsed}" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('hidden')">
-        <div class="left">
-          <div class="avatar">#${idx + 1}</div>
-          <div><div class="addr">${addr}</div></div>
-        </div>
-        <div class="stats">
-          <div class="stat"><div class="num">${records.length}</div><div class="lbl">笔数</div></div>
-          <div class="stat"><div class="num" style="color:var(--green)">${formatAmount(total)}</div><div class="lbl">ARK 累计</div></div>
-        </div>
-        <div class="arrow">▼</div>
-      </div>
-      <div class="whale-body${hidden}">
-        ${records.length === 0 ? '<div style="color:var(--text-secondary);text-align:center;padding:20px;">暂无记录</div>' :
-        '<table><thead><tr><th>时间</th><th>Tx Hash</th><th>数量(ARK)</th><th>来源</th></tr></thead><tbody>' + rows + '</tbody></table>'}
-      </div>
-    </div>`;
+    return `<div class="whale-card"><div class="whale-header${collapsed}" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('hidden')"><div class="left"><div class="avatar">#${idx + 1}</div><div><div class="addr">${addr}</div></div></div><div class="stats"><div class="stat"><div class="num">${records.length}</div><div class="lbl">笔数</div></div><div class="stat"><div class="num" style="color:var(--green)">${fmt(total)}</div><div class="lbl">ARK 累计</div></div></div><div class="arrow">▼</div></div><div class="whale-body${hidden}">${records.length === 0 ? '<div style="color:var(--text-secondary);text-align:center;padding:20px;">暂无记录</div>' : '<table><thead><tr><th>时间</th><th>Tx Hash</th><th>数量(ARK)</th><th>来源</th></tr></thead><tbody>' + rows + '</tbody></table>'}</div></div>`;
   }).join('');
 }
 
-// ====== Init ======
-connectWS();
+// 初始加载 + 定时刷新（每5分钟轮询）
+loadData();
+setInterval(loadData, 5 * 60 * 1000);
 </script>
 </body>
 </html>
