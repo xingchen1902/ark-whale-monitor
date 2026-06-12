@@ -131,7 +131,7 @@
 <body>
 <div class="container">
   <div class="status-bar">
-    <div><span class="dot" id="statusDot"></span> <span id="statusText">加载中...</span></div>
+    <div><span class="dot" id="statusDot"></span> <span id="statusText">加载中...</span> <span id="syncInfo" style="color:var(--text-secondary);margin-left:8px;"></span></div>
     <div id="recordInfo">-</div>
     <div id="updateTime">-</div>
   </div>
@@ -281,6 +281,11 @@ function renderWhaleDetails() {
 // 初始加载 + 定时刷新（每5分钟轮询）
 loadData();
 setInterval(loadData, 5 * 60 * 1000);
+
+// 页面可见时立即刷新
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) loadData();
+});
 </script>
 </body>
 </html>
