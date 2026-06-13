@@ -1,13 +1,17 @@
 /**
  * Telegram Bot - 推送 + 添加地址
+ * 使用 RPC eth_getLogs 替代 BSCScan 爬虫
  */
 const TelegramBot = require('node-telegram-bot-api');
-const https = require('https');
+const { ethers } = require('ethers');
 
 const BOT_TOKEN = '8526583093:AAEOv3YC804ILxqPfYH-h_miZ9M6jpYHUDE';
 const CHAT_ID = '-1002577657965';
+const RPC_URL = 'https://bsc-mainnet.nodereal.io/v1/fdc3ae39b7b845669e15f730ecf71475';
 const ARK_CONTRACT = '0xCae117ca6Bc8A341D2E7207F30E180f0e5618B9D';
 const POOL_ADDRESS = '0x8501168656FcaC4628F6910CcABEA8B64Ebe5BD4';
+const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+const POOL_TOPIC = '0x0000000000000000000000008501168656fcac4628f6910ccabea8b64ebe5bd4';
 
 let pushedTxs = new Set();
 let bot = null;
@@ -29,43 +33,42 @@ function init(transfersRef_, onNewData_) {
     const addrMatch = text.match(/0x[a-fA-F0-9]{40}/);
     if (!addrMatch) return;
     
-    const address = addrMatch[0].toLowerCase();
+    const address = ethers.utils.getAddress(addrMatch[0]).toLowerCase();
     
     const existing = transfersRef.some(t => t.to.toLowerCase() === address && t.txHash !== 'placeholder');
     if (existing) {
-      const count = transfersRef.filter(t => t.to.toLowerCase() === address && t.txHash !== 'placeholder').length;
-      const total = transfersRef.filter(t => t.to.toLowerCase() === address).reduce((s, t) => s + parseFloat(t.value || 0), 0);
+      const records = transfersRef.filter(t => t.to.toLowerCase() === address && t.txHash !== 'placeholder');
+      const total = records.reduce((s, t) => s + parseFloat(t.value || 0), 0);
       await bot.sendMessage(chatId, 
-        `⚠️ 地址已在监控\n<code>${address}</code>\n已录入 ${count} 笔 | ${total.toFixed(2)} ARK`,
+        `⚠️ 地址已在监控中\n<code>${address}</code>\n已录入 ${records.length} 笔 | ${total.toFixed(2)} ARK`,
         { parse_mode: 'HTML' });
       return;
     }
     
-    await bot.sendMessage(chatId, `🔍 正在爬取 ${address.slice(0,10)}... 的交易记录...`);
+    await bot.sendMessage(chatId, `🔍 正在扫描链上 ${address.slice(0,10)}... 的转入记录...`);
     
-    const records = await fetchFromBscScan(address);
+    // 用 RPC 查询
+    const records = await fetchFromRPC(address);
     
     if (records.length === 0) {
-      await bot.sendMessage(chatId, `❌ 未找到从奖金池转入的记录`, { parse_mode: 'HTML' });
+      await bot.sendMessage(chatId, `❌ 未找到从奖金池转入 ${address.slice(0,10)}... 的记录`, { parse_mode: 'HTML' });
       return;
     }
     
     if (onNewData) onNewData(records);
     
-    // 构建详细记录 + 统计
     const total = records.reduce((s, r) => s + parseFloat(r.value), 0);
     const latest = records[0].timestamp.slice(0, 16).replace('T', ' ');
     const earliest = records[records.length - 1].timestamp.slice(0, 16).replace('T', ' ');
     
-    // 最近5条详细
     const recent5 = records.slice(0, 5).map(r => {
       const ts = r.timestamp.slice(0, 16).replace('T', ' ');
       const amt = formatARK(r.value);
-      const shortTx = r.txHash.slice(0, 8) + '...' + r.txHash.slice(-6);
+      const shortTx = r.txHash.slice(0, 8) + '..' + r.txHash.slice(-6);
       return `▫ ${ts}  ${amt} ARK  <a href="https://bscscan.com/tx/${r.txHash}">${shortTx}</a>`;
     }).join('\n');
     
-    const msgParts = [
+    const msgText = [
       `✅ <b>添加成功！</b>`,
       `<code>${address}</code>`,
       ``,
@@ -82,7 +85,7 @@ function init(transfersRef_, onNewData_) {
       `<a href="https://bscscan.com/address/${address}">🔗 BSCScan 地址详情</a>`,
     ].filter(Boolean).join('\n');
     
-    await bot.sendMessage(chatId, msgParts, { parse_mode: 'HTML', disable_web_page_preview: true });
+    await bot.sendMessage(chatId, msgText, { parse_mode: 'HTML', disable_web_page_preview: true });
   });
   
   console.log('[Bot] Telegram Bot 已启动');
@@ -94,6 +97,53 @@ function formatARK(value) {
   if (num >= 1000) return num.toLocaleString(undefined, {maximumFractionDigits: 2});
   if (num >= 1) return num.toFixed(4);
   return num.toFixed(6);
+}
+
+// RPC 查询 — 只查最近 200 万区块（约 2 周），更早的数据用历史数据
+async function fetchFromRPC(address) {
+  const provider = new ethers.providers.JsonRpcProvider({ url: RPC_URL, timeout: 30000 });
+  const whaleTopic = '0x000000000000000000000000' + address.slice(2);
+  const currentBlock = await provider.getBlockNumber();
+  
+  // 从合约部署开始查
+  const FROM_BLOCK = 33500000;
+  let allRecords = [];
+  const seenTxs = new Set();
+  
+  for (let from = FROM_BLOCK; from <= currentBlock; from += 50000) {
+    const to = Math.min(from + 49999, currentBlock);
+    try {
+      const logs = await provider.getLogs({
+        address: ARK_CONTRACT,
+        topics: [TRANSFER_TOPIC, POOL_TOPIC, whaleTopic],
+        fromBlock: from, toBlock: to,
+      });
+      for (const l of logs) {
+        if (seenTxs.has(l.transactionHash)) continue;
+        seenTxs.add(l.transactionHash);
+        let timestamp;
+        try {
+          const block = await provider.getBlock(l.blockNumber);
+          timestamp = new Date(block.timestamp * 1000).toISOString();
+        } catch(e) {
+          timestamp = new Date().toISOString();
+        }
+        allRecords.push({
+          txHash: l.transactionHash,
+          blockNumber: l.blockNumber,
+          timestamp,
+          from: POOL_ADDRESS,
+          to: ethers.utils.getAddress('0x' + l.topics[2].slice(26)),
+          value: ethers.utils.formatUnits(l.data, 18),
+        });
+      }
+    } catch(e) {
+      console.error(`RPC error [${from}-${to}]:`, e.message);
+    }
+  }
+  
+  allRecords.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  return allRecords;
 }
 
 // 推送新转账
@@ -108,41 +158,31 @@ async function notifyNewTransfers(newRecords, allTransfers) {
   const toPush = newRecords.filter(t => !pushedTxs.has(t.txHash));
   if (toPush.length === 0) return;
   
-  // 获取该地址的累计统计
-  function getAddrStats(addr) {
-    const records = allTransfers.filter(t => t.to.toLowerCase() === addr && t.txHash !== 'placeholder');
-    const total = records.reduce((s, t) => s + parseFloat(t.value), 0);
-    return { count: records.length, total };
-  }
-  
   for (const record of toPush) {
     pushedTxs.add(record.txHash);
     
-    const shortAddr = record.to.slice(0, 10) + '...' + record.to.slice(-6);
-    const shortTx = record.txHash.slice(0, 10) + '...' + record.txHash.slice(-6);
-    const ts = record.timestamp.slice(0, 16).replace('T', ' ');
-    const amount = formatARK(record.value);
-    const addrStats = getAddrStats(record.to);
+    const addrRecords = allTransfers.filter(t => t.to.toLowerCase() === record.to.toLowerCase());
+    const total = addrRecords.reduce((s, t) => s + parseFloat(t.value), 0);
     
     const message = [
       `🐋 <b>奖金池 → 狗大户</b>`,
       `━━━━━━━━━━━━━━━`,
       ``,
       `<b>交易详情</b>`,
-      `时间: ${ts}`,
-      `数量: <b>${amount} ARK</b>`,
-      `接收: <code>${shortAddr}</code>`,
-      `交易: <a href="https://bscscan.com/tx/${record.txHash}">${shortTx}</a>`,
+      `时间: ${record.timestamp.slice(0, 16).replace('T', ' ')}`,
+      `数量: <b>${formatARK(record.value)} ARK</b>`,
+      `地址: <code>${record.to.slice(0,10)}..${record.to.slice(-6)}</code>`,
+      `交易: <a href="https://bscscan.com/tx/${record.txHash}">${record.txHash.slice(0,10)}..${record.txHash.slice(-6)}</a>`,
       ``,
       `<b>📊 该地址累计</b>`,
-      `转入: ${addrStats.count} 笔`,
-      `总计: ${formatARK(addrStats.total)} ARK`,
+      `转入: ${addrRecords.length} 笔`,
+      `总计: ${formatARK(total)} ARK`,
       `<a href="https://bscscan.com/address/${record.to}">查看地址</a>`,
     ].join('\n');
     
     try {
       await bot.sendMessage(CHAT_ID, message, { parse_mode: 'HTML', disable_web_page_preview: true });
-      console.log(`[Bot] 已推送: ${record.txHash.slice(0, 16)}... ${amount} ARK`);
+      console.log(`[Bot] 已推送: ${record.txHash.slice(0, 16)}... ${formatARK(record.value)} ARK`);
     } catch(e) {
       console.error('[Bot] 推送失败:', e.message);
     }
@@ -151,77 +191,10 @@ async function notifyNewTransfers(newRecords, allTransfers) {
   }
 }
 
-// 爬取 BSCScan
-async function fetchFromBscScan(address) {
-  function fetchPage(page) {
-    return new Promise((resolve, reject) => {
-      const url = `https://bscscan.com/tokentxns?a=${address}&contract=${ARK_CONTRACT}&p=${page}`;
-      https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' } }, (resp) => {
-        let data = '';
-        resp.on('data', chunk => data += chunk);
-        resp.on('end', () => resolve(data));
-      }).on('error', reject);
-    });
-  }
-  
-  const results = [];
-  const seenTxs = new Set();
-  const POOL = POOL_ADDRESS.toLowerCase();
-  const TARGET = address.toLowerCase();
-  
-  try {
-    const html = await fetchPage(1);
-    const lastMatch = html.match(/<a[^>]*href="[^"]*p=(\d+)"[^>]*>\s*Last\s*</i);
-    const maxPage = lastMatch ? Math.min(parseInt(lastMatch[1]), 200) : 1;
-    
-    const rows = html.match(/<tr[^>]*>.*?<\/tr>/gs) || [];
-    for (const row of rows) {
-      const txMatch = row.match(/href="\/tx\/(0x[a-fA-F0-9]{64})"/);
-      if (!txMatch) continue;
-      const fromAddrs = row.match(/data-highlight-target="(0x[a-fA-F0-9]{40})"/g) || [];
-      const addrs = fromAddrs.map(a => a.match(/0x[a-fA-F0-9]{40}/)[0].toLowerCase());
-      if ((addrs[0] || '') === POOL && (addrs[1] || '') === TARGET) {
-        const tsMatch = row.match(/(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}:\d{2})/);
-        const amtMatch = row.match(/class="td_showAmount"[^>]*>\s*([^<]+)/);
-        const blockMatch = row.match(/href="\/block\/(\d+)"/);
-        let amount = '';
-        if (amtMatch) { const m = amtMatch[1].match(/([\d,]+\.?\d*)/); if (m) amount = m[1].replace(',', ''); }
-        const record = { txHash: txMatch[1], blockNumber: blockMatch ? parseInt(blockMatch[1]) : 0, timestamp: (tsMatch ? tsMatch[1] : '').replace(' ', 'T') + ':00', from: POOL_ADDRESS, to: address, value: amount };
-        if (!seenTxs.has(record.txHash)) { seenTxs.add(record.txHash); results.push(record); }
-      }
-    }
-    
-    for (let p = 2; p <= Math.min(maxPage, 10); p++) {
-      await new Promise(r => setTimeout(r, 1500));
-      const html = await fetchPage(p);
-      const rows = html.match(/<tr[^>]*>.*?<\/tr>/gs) || [];
-      for (const row of rows) {
-        const txMatch = row.match(/href="\/tx\/(0x[a-fA-F0-9]{64})"/);
-        if (!txMatch) continue;
-        const fromAddrs = row.match(/data-highlight-target="(0x[a-fA-F0-9]{40})"/g) || [];
-        const addrs = fromAddrs.map(a => a.match(/0x[a-fA-F0-9]{40}/)[0].toLowerCase());
-        if ((addrs[0] || '') === POOL && (addrs[1] || '') === TARGET) {
-          const tsMatch = row.match(/(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}:\d{2})/);
-          const amtMatch = row.match(/class="td_showAmount"[^>]*>\s*([^<]+)/);
-          const blockMatch = row.match(/href="\/block\/(\d+)"/);
-          let amount = '';
-          if (amtMatch) { const m = amtMatch[1].match(/([\d,]+\.?\d*)/); if (m) amount = m[1].replace(',', ''); }
-          const record = { txHash: txMatch[1], blockNumber: blockMatch ? parseInt(blockMatch[1]) : 0, timestamp: (tsMatch ? tsMatch[1] : '').replace(' ', 'T') + ':00', from: POOL_ADDRESS, to: address, value: amount };
-          if (!seenTxs.has(record.txHash)) { seenTxs.add(record.txHash); results.push(record); }
-        }
-      }
-    }
-  } catch(e) {
-    console.error('BSCScan fetch error:', e.message);
-  }
-  
-  return results;
-}
-
 async function sendTestMessage() {
   if (!bot) bot = new TelegramBot(BOT_TOKEN);
   try {
-    await bot.sendMessage(CHAT_ID, '✅ ARK 监控 Bot 已启动！发送地址 0x... 即可添加监控', { parse_mode: 'HTML' });
+    await bot.sendMessage(CHAT_ID, '✅ ARK 监控已启动！在群里发送地址 0x... 即可添加监控', { parse_mode: 'HTML' });
     return true;
   } catch(e) {
     console.error('[Bot] 测试消息失败:', e.message);
