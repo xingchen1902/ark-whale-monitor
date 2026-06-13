@@ -1,13 +1,15 @@
 const express = require('express');
 const path = require('path');
 const { ethers } = require('ethers');
-const { init: initBot, scanAndPushAddress, notifyNewTransfers, sendTestMessage } = require('./api/notifier');
+const { init: initBot, scanAndPushAddress, notifyNewTransfers, sendTestMessage, handleMessage, sendTelegramTo } = require('./api/notifier');
 const initialTransfers = require('./api/initial_transfers.json');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json()); // 解析 JSON body（Telegram webhook 需要）
 
+const BOT_TOKEN = '8526583093:AAEOv3YC804ILxqPfYH-h_miZ9M6jpYHUDE';
 const RPC_URL = 'https://bsc-mainnet.nodereal.io/v1/fdc3ae39b7b845669e15f730ecf71475';
 const ARK_CONTRACT = '0xCae117ca6Bc8A341D2E7207F30E180f0e5618B9D';
 const POOL_ADDRESS = '0x8501168656FcaC4628F6910CcABEA8B64Ebe5BD4';
@@ -23,25 +25,81 @@ function getAllAddresses() {
 
 function onNewBotData(records) {
   if (records.length === 0) return;
-  transfers = transfers.filter(t => !(t.txHash === 'placeholder' && t.to.toLowerCase() === records[0].to.toLowerCase()));
-  transfers.push(...records);
+  const addr = records[0].to.toLowerCase();
+  // 移除旧 placeholder，合并新数据
+  transfers = transfers.filter(t => !(t.to.toLowerCase() === addr && t.txHash === 'placeholder'));
+  const existingHashes = new Set(transfers.map(t => t.txHash));
+  const newOnes = records.filter(r => !existingHashes.has(r.txHash));
+  transfers.push(...newOnes);
   transfers.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  console.log(`[Bot] 合并新数据: ${newOnes.length} 条, 总数: ${transfers.length}`);
 }
 
 initBot(transfers, onNewBotData);
 
-// API: 添加地址（通过 Telegram 群发地址）
-// 实际上地址通过 Telegram API 获取不到消息了（因为没 polling）
-// 改为通过 HTTP API 手动触发扫描 + 推送到群
+// ===== Telegram Webhook =====
+// 接收 Telegram 的消息更新
+app.post('/webhook/telegram', async (req, res) => {
+  res.sendStatus(200); // 立即返回 200 避免 Telegram 重试
+  
+  const update = req.body;
+  if (!update) return;
+  
+  const message = update.message || update.channel_post;
+  if (!message || !message.text) return;
+  
+  const chatId = message.chat.id;
+  const text = message.text;
+  
+  console.log(`[Bot Webhook] 收到消息: ${text.slice(0, 50)}`);
+  
+  // 异步处理，不阻塞响应
+  handleMessage(chatId, text).catch(e => {
+    console.error('[Bot Webhook] 处理失败:', e.message);
+  });
+});
+
+// ===== 设置 Webhook（启动时） =====
+async function setWebhook() {
+  const railwayUrl = process.env.RAILWAY_PUBLIC_DOMAIN 
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : `http://localhost:${PORT}`;
+  const webhookUrl = `${railwayUrl}/webhook/telegram`;
+  
+  const https = require('https');
+  const data = JSON.stringify({ url: webhookUrl, drop_pending_updates: true });
+  
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.telegram.org',
+      path: `/bot${BOT_TOKEN}/setWebhook`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+    }, (res) => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => {
+        const result = JSON.parse(body);
+        console.log('[Bot Webhook] 设置结果:', result.description || JSON.stringify(result));
+        resolve(result);
+      });
+    });
+    req.on('error', (e) => {
+      console.error('[Bot Webhook] 设置失败:', e.message);
+      reject(e);
+    });
+    req.write(data);
+    req.end();
+  });
+}
+
+// ===== 现有 API =====
 app.get('/api/add-address', async (req, res) => {
   const address = req.query.address?.trim().toLowerCase();
   if (!address || !/^0x[a-f0-9]{40}$/.test(address)) {
     return res.json({ error: '无效地址' });
   }
-  
-  // 异步扫描并推送
   scanAndPushAddress(address).catch(e => console.error('[Bot] 扫描失败:', e.message));
-  
   res.json({ message: '已开始扫描, 结果将通过 Telegram 推送' });
 });
 
@@ -115,5 +173,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`ARK 监控服务: http://localhost:${PORT}`);
   console.log(`数据: ${transfers.filter(t => t.txHash !== 'placeholder').length} 条`);
   console.log(`监控: ${getAllAddresses().length} 个地址`);
-  console.log(`Bot: 发送 GET /api/add-address?address=0x... 触发扫描`);
+  
+  // 启动后设置 webhook
+  setTimeout(() => setWebhook(), 2000);
 });
