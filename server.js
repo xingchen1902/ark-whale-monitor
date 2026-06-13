@@ -1,12 +1,11 @@
 const express = require('express');
 const path = require('path');
 const { ethers } = require('ethers');
-const { init: initBot, notifyNewTransfers, sendTestMessage } = require('./api/notifier');
+const { init: initBot, scanAndPushAddress, notifyNewTransfers, sendTestMessage } = require('./api/notifier');
 const initialTransfers = require('./api/initial_transfers.json');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
 app.use(express.static(path.join(__dirname, 'public')));
 
 const RPC_URL = 'https://bsc-mainnet.nodereal.io/v1/fdc3ae39b7b845669e15f730ecf71475';
@@ -22,7 +21,6 @@ function getAllAddresses() {
   return [...new Set(transfers.map(t => t.to.toLowerCase()).filter(a => a !== POOL_ADDRESS.toLowerCase()))];
 }
 
-// Bot 添加新数据的回调
 function onNewBotData(records) {
   if (records.length === 0) return;
   transfers = transfers.filter(t => !(t.txHash === 'placeholder' && t.to.toLowerCase() === records[0].to.toLowerCase()));
@@ -30,10 +28,23 @@ function onNewBotData(records) {
   transfers.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 }
 
-// 启动 Bot
 initBot(transfers, onNewBotData);
 
-// API
+// API: 添加地址（通过 Telegram 群发地址）
+// 实际上地址通过 Telegram API 获取不到消息了（因为没 polling）
+// 改为通过 HTTP API 手动触发扫描 + 推送到群
+app.get('/api/add-address', async (req, res) => {
+  const address = req.query.address?.trim().toLowerCase();
+  if (!address || !/^0x[a-f0-9]{40}$/.test(address)) {
+    return res.json({ error: '无效地址' });
+  }
+  
+  // 异步扫描并推送
+  scanAndPushAddress(address).catch(e => console.error('[Bot] 扫描失败:', e.message));
+  
+  res.json({ message: '已开始扫描, 结果将通过 Telegram 推送' });
+});
+
 app.get('/api/transfers', async (req, res) => {
   const whaleStats = {};
   for (const t of transfers) {
@@ -42,18 +53,12 @@ app.get('/api/transfers', async (req, res) => {
     whaleStats[t.to].count++;
     whaleStats[t.to].total += parseFloat(t.value);
   }
-  res.json({
-    transfers,
-    totalCount: transfers.filter(t => t.txHash !== 'placeholder').length,
-    whaleStats,
-  });
+  res.json({ transfers, totalCount: transfers.filter(t => t.txHash !== 'placeholder').length, whaleStats });
 });
 
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-// 定时检查新转账（每分钟）
+// 定时检查新转账
 async function checkNewTransfers() {
   try {
     const provider = new ethers.providers.JsonRpcProvider({ url: RPC_URL, timeout: 30000 });
@@ -110,5 +115,5 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`ARK 监控服务: http://localhost:${PORT}`);
   console.log(`数据: ${transfers.filter(t => t.txHash !== 'placeholder').length} 条`);
   console.log(`监控: ${getAllAddresses().length} 个地址`);
-  console.log(`Bot: 在群里发送地址即可添加监控`);
+  console.log(`Bot: 发送 GET /api/add-address?address=0x... 触发扫描`);
 });
