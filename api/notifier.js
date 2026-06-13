@@ -8,6 +8,7 @@ const ARK_CONTRACT = '0xCae117ca6Bc8A341D2E7207F30E180f0e5618B9D';
 const POOL_ADDRESS = '0x8501168656FcaC4628F6910CcABEA8B64Ebe5BD4';
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const POOL_TOPIC = '0x0000000000000000000000008501168656fcac4628f6910ccabea8b64ebe5bd4';
+const FROM_BLOCK = 33500000; // 大约 2025-08-27
 
 let provider = new ethers.providers.JsonRpcProvider({ url: RPC_URL, timeout: 30000 });
 let pushedTxs = new Set();
@@ -17,7 +18,7 @@ let onNewData = null;
 function init(transfersRef_, onNewData_) {
   transfersRef = transfersRef_;
   onNewData = onNewData_;
-  console.log('[Bot] 已就绪（仅发送模式）');
+  console.log('[Bot] 已就绪');
 }
 
 function sendTelegramTo(chatId, text, parseMode = 'HTML') {
@@ -56,121 +57,10 @@ function formatARK(value) {
   return num.toFixed(6);
 }
 
-// ✨ 简化版：直接查最近 50000 区块，BSC 3s/块，覆盖 ~1.7 天足够包含当天
-async function getRecentBlockRange() {
-  const currentBlockNum = await provider.getBlockNumber();
-  const fromBlock = currentBlockNum - 50000;
-  const currentBlock = await provider.getBlock(currentBlockNum);
-  const now = new Date(currentBlock.timestamp * 1000);
-  const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const todayStr = todayStart.toISOString().slice(0, 10);
-  return { fromBlock, toBlock: currentBlockNum, todayStr, currentBlockNum };
-}
-
-// 处理 Telegram 收到的消息（webhook）— 查当天从奖金池的转入
-async function handleMessage(chatId, msgText) {
-  const text = msgText.trim();
-
-  if (text === '/start') {
-    await sendTelegramTo(chatId, '🤖 <b>ARK 奖金池转入查询 Bot</b>\n\n发送任意 BSC 地址，我会查询该地址<b>今天</b>从奖金池转入的 ARK 记录。\n\n示例：\n<code>0x8e5E761EAF35c8bc7a4F359A44EA2D255E25e052</code>\n\n奖金池地址：\n<code>0x8501168656FcaC4628F6910CcABEA8B64Ebe5BD4</code>');
-    return;
-  }
-
-  const addrMatch = text.match(/0x[a-fA-F0-9]{40}/);
-  if (!addrMatch) return;
-
-  const address = ethers.utils.getAddress(addrMatch[0]);
-  const shortAddr = address.slice(0, 10) + '..' + address.slice(-6);
-
-  await sendTelegramTo(chatId, `🔍 正在查询 <code>${shortAddr}</code> 今天从奖金池转入的记录...`);
-
-  try {
-    const { fromBlock, toBlock, todayStr } = await getRecentBlockRange();
-    console.log(`[Bot] 查询 ${shortAddr}: 区块 ${fromBlock} ~ ${toBlock}`);
-
-    const whaleTopic = '0x000000000000000000000000' + address.slice(2).toLowerCase();
-
-    const logs = await provider.getLogs({
-      address: ARK_CONTRACT,
-      topics: [TRANSFER_TOPIC, POOL_TOPIC, whaleTopic],
-      fromBlock,
-      toBlock,
-    });
-
-    if (logs.length === 0) {
-      await sendTelegramTo(chatId, `❌ <code>${shortAddr}</code>\n今天没有从奖金池转入的记录`);
-      return;
-    }
-
-    // 获取区块时间 + 构建记录
-    const records = [];
-    const seenTxs = new Set();
-    for (const l of logs) {
-      if (seenTxs.has(l.transactionHash)) continue;
-      seenTxs.add(l.transactionHash);
-      let timestamp;
-      try {
-        const block = await provider.getBlock(l.blockNumber);
-        timestamp = new Date(block.timestamp * 1000).toISOString();
-      } catch(e) {
-        timestamp = new Date().toISOString();
-      }
-      records.push({
-        txHash: l.transactionHash,
-        blockNumber: l.blockNumber,
-        timestamp,
-        to: ethers.utils.getAddress('0x' + l.topics[2].slice(26)),
-        value: ethers.utils.formatUnits(l.data, 18),
-      });
-    }
-
-    // 只保留今天的
-    const todayRecords = records.filter(r => r.timestamp.slice(0, 10) === todayStr);
-
-    if (todayRecords.length === 0) {
-      await sendTelegramTo(chatId, `❌ <code>${shortAddr}</code>\n今天没有从奖金池转入的记录`);
-      return;
-    }
-
-    todayRecords.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    const total = todayRecords.reduce((s, r) => s + parseFloat(r.value), 0);
-
-    const detailLines = todayRecords.map((r, i) => {
-      const ts = r.timestamp.slice(11, 19);
-      const amt = formatARK(r.value);
-      const shortTx = r.txHash.slice(0, 6) + '..' + r.txHash.slice(-4);
-      return `${i + 1}. ${ts}  ${amt} ARK  <a href="https://bscscan.com/tx/${r.txHash}">${shortTx}</a>`;
-    }).join('\n');
-
-    const msg = [
-      `📋 <b>${todayStr} 奖金池转入明细</b>`,
-      `<code>${address}</code>`,
-      ``,
-      detailLines,
-      ``,
-      `<b>📊 合计：${todayRecords.length} 笔 | ${formatARK(total)} ARK</b>`,
-      `<a href="https://bscscan.com/address/${address}">🔗 BSCScan</a>`,
-    ].join('\n');
-
-    await sendTelegramTo(chatId, msg);
-
-    // 如果在默认群，更新到内存
-    if (onNewData && address.toLowerCase() !== POOL_ADDRESS.toLowerCase()) {
-      onNewData(todayRecords);
-    }
-
-    console.log(`[Bot] 已推送 ${shortAddr} 的 ${todayRecords.length} 条记录`);
-  } catch(e) {
-    console.error('[Bot] 查询失败:', e.message);
-    await sendTelegramTo(chatId, `❌ 查询失败: ${e.message}`);
-  }
-}
-
-// RPC 查询全部记录（用于添加地址）
+// 扫描地址从 FROM_BLOCK 到现在的全部记录
 async function fetchFromRPC(address) {
-  const whaleTopic = '0x000000000000000000000000' + address.slice(2);
+  const whaleTopic = '0x000000000000000000000000' + address.slice(2).toLowerCase();
   const currentBlock = await provider.getBlockNumber();
-  const FROM_BLOCK = 33500000;
   const records = [];
   const seenTxs = new Set();
 
@@ -195,14 +85,119 @@ async function fetchFromRPC(address) {
           value: ethers.utils.formatUnits(l.data, 18),
         });
       }
-    } catch(e) {}
+    } catch(e) {
+      console.error(`[Bot] getLogs 分段失败 ${from}-${to}:`, e.message);
+    }
   }
 
   records.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   return records;
 }
 
-// 扫描地址并推送全部结果到群
+// 处理 Telegram 消息 → 自动全量扫描 + 推送到群 + 加入监控
+async function handleMessage(chatId, msgText) {
+  const text = msgText.trim();
+
+  if (text === '/start') {
+    await sendTelegramTo(chatId, '🤖 <b>ARK 奖金池转入监控 Bot</b>\n\n发送任意 BSC 地址，我会：\n1️⃣ 扫描该地址从 2025-08-27 至今从奖金池转入的所有记录\n2️⃣ 推送到本群的完整统计数据\n3️⃣ 加入自动监控，后续有转入自动推送\n\n示例：<code>0x8e5E761EAF35c8bc7a4F359A44EA2D255E25e052</code>\n\n奖金池地址：<code>0x8501168656FcaC4628F6910CcABEA8B64Ebe5BD4</code>');
+    return;
+  }
+
+  const addrMatch = text.match(/0x[a-fA-F0-9]{40}/);
+  if (!addrMatch) return;
+
+  const address = ethers.utils.getAddress(addrMatch[0]);
+  const shortAddr = address.slice(0, 10) + '..' + address.slice(-6);
+
+  // 检查是否已在监控
+  const existing = transfersRef.some(t => t.to.toLowerCase() === address.toLowerCase() && t.txHash !== 'placeholder');
+  if (existing) {
+    const addrRecords = transfersRef.filter(t => t.to.toLowerCase() === address.toLowerCase() && t.txHash !== 'placeholder');
+    const total = addrRecords.reduce((s, t) => s + parseFloat(t.value), 0);
+    const latest = addrRecords[0];
+
+    const msg = [
+      `⚠️ <code>${shortAddr}</code> 已在监控中`,
+      `已收录 ${addrRecords.length} 笔 | ${formatARK(total)} ARK`,
+      ``,
+      `<b>最近一笔转入</b>`,
+      `${latest.timestamp.slice(0,16).replace('T',' ')}`,
+      `${formatARK(latest.value)} ARK`,
+      `<a href="https://bscscan.com/tx/${latest.txHash}">查看交易</a>`,
+      `<a href="https://bscscan.com/address/${address}">🔗 BSCScan 地址详情</a>`,
+    ].join('\n');
+    await sendTelegramTo(chatId, msg);
+    return;
+  }
+
+  await sendTelegramTo(chatId, `🔍 正在全量扫描 <code>${shortAddr}</code>\n从 2025-08-27 至今的奖金池转入记录...`);
+
+  try {
+    const records = await fetchFromRPC(address);
+
+    if (records.length === 0) {
+      await sendTelegramTo(chatId, `❌ <code>${shortAddr}</code>\n从 2025-08-27 至今没有从奖金池转入的记录`);
+      return;
+    }
+
+    // 合并到全局数据
+    if (onNewData) onNewData(records);
+
+    const total = records.reduce((s, r) => s + parseFloat(r.value), 0);
+    const earliest = records[records.length - 1].timestamp.slice(0, 10);
+    const latest = records[0].timestamp.slice(0, 10);
+
+    // 统计每月
+    const monthly = {};
+    for (const r of records) {
+      const m = r.timestamp.slice(0, 7);
+      if (!monthly[m]) monthly[m] = { count: 0, total: 0 };
+      monthly[m].count++;
+      monthly[m].total += parseFloat(r.value);
+    }
+
+    const monthlyLines = Object.entries(monthly)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([m, v]) => `  ${m}: ${v.count} 笔 | ${formatARK(v.total)} ARK`)
+      .join('\n');
+
+    // 最近 5 条
+    const recent5 = records.slice(0, 5).map(r => {
+      const ts = r.timestamp.slice(0, 16).replace('T', ' ');
+      const amt = formatARK(r.value);
+      const shortTx = r.txHash.slice(0, 6) + '..' + r.txHash.slice(-4);
+      return `▫ ${ts}  ${amt} ARK  <a href="https://bscscan.com/tx/${r.txHash}">${shortTx}</a>`;
+    }).join('\n');
+
+    const msg = [
+      `✅ <b>监控添加成功！</b>`,
+      `<code>${address}</code>`,
+      ``,
+      `<b>📊 统计汇总</b>`,
+      `转入笔数: ${records.length}`,
+      `累计数量: ${formatARK(total)} ARK`,
+      `首次转入: ${earliest}`,
+      `最近转入: ${latest}`,
+      ``,
+      `<b>📅 月度分布</b>`,
+      monthlyLines,
+      ``,
+      `<b>📋 最近转入</b>`,
+      recent5,
+      ``,
+      `🔔 后续有转入将自动推送`,
+      `<a href="https://bscscan.com/address/${address}">🔗 BSCScan</a>`,
+    ].join('\n');
+
+    await sendTelegramTo(chatId, msg);
+    console.log(`[Bot] 已添加监控: ${shortAddr}, ${records.length} 条, ${formatARK(total)} ARK`);
+  } catch(e) {
+    console.error('[Bot] 全量扫描失败:', e.message);
+    await sendTelegramTo(chatId, `❌ 扫描失败: ${e.message}`);
+  }
+}
+
+// 扫描地址并推送结果到默认群（HTTP API 调用）
 async function scanAndPushAddress(address) {
   const existing = transfersRef.some(t => t.to.toLowerCase() === address && t.txHash !== 'placeholder');
   if (existing) {
@@ -296,7 +291,7 @@ async function notifyNewTransfers(newRecords, allTransfers) {
 
 async function sendTestMessage() {
   try {
-    await sendTelegram('✅ ARK 监控已启动！推送模式');
+    await sendTelegram('✅ ARK 监控已启动！');
     return true;
   } catch(e) {
     console.error('[Bot] 测试消息失败:', e.message);
@@ -307,5 +302,5 @@ async function sendTestMessage() {
 module.exports = {
   init, scanAndPushAddress, notifyNewTransfers, sendTestMessage,
   handleMessage, sendTelegramTo, sendTelegram,
-  provider
+  provider, fetchFromRPC
 };

@@ -1,9 +1,9 @@
 const express = require('express');
 const path = require('path');
 const { ethers } = require('ethers');
-const { init: initBot, scanAndPushAddress, notifyNewTransfers, sendTestMessage, handleMessage, sendTelegramTo } = require('./api/notifier');
+const { init: initBot, scanAndPushAddress, notifyNewTransfers, sendTestMessage, handleMessage, sendTelegramTo, fetchFromRPC } = require('./api/notifier');
 const initialTransfers = require('./api/initial_transfers.json');
-const http = require('http');
+const https = require('https');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -16,9 +16,10 @@ const ARK_CONTRACT = '0xCae117ca6Bc8A341D2E7207F30E180f0e5618B9D';
 const POOL_ADDRESS = '0x8501168656FcaC4628F6910CcABEA8B64Ebe5BD4';
 const POOL_TOPIC = '0x0000000000000000000000008501168656fcac4628f6910ccabea8b64ebe5bd4';
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+const FROM_BLOCK = 33500000; // 2025-08-27 左右
 
 let transfers = [...initialTransfers];
-let maxBlock = Math.max(...transfers.filter(t => t.txHash !== 'placeholder').map(t => t.blockNumber), 0);
+let maxBlock = Math.max(...transfers.filter(t => t.txHash !== 'placeholder').map(t => t.blockNumber), FROM_BLOCK);
 
 function getAllAddresses() {
   return [...new Set(transfers.map(t => t.to.toLowerCase()).filter(a => a !== POOL_ADDRESS.toLowerCase()))];
@@ -32,7 +33,12 @@ function onNewBotData(records) {
   const newOnes = records.filter(r => !existingHashes.has(r.txHash));
   transfers.push(...newOnes);
   transfers.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  console.log(`[Bot] 合并新数据: ${newOnes.length} 条, 总数: ${transfers.length}`);
+
+  // 更新 maxBlock 为所有记录的最大值
+  const maxNewBlock = Math.max(...newOnes.map(r => r.blockNumber), 0);
+  if (maxNewBlock > maxBlock) maxBlock = maxNewBlock;
+
+  console.log(`[Bot] 合并新数据: ${newOnes.length} 条, 总数: ${transfers.length}, maxBlock: ${maxBlock}`);
 }
 
 initBot(transfers, onNewBotData);
@@ -40,18 +46,13 @@ initBot(transfers, onNewBotData);
 // ===== Telegram Webhook =====
 app.post('/webhook/telegram', async (req, res) => {
   res.sendStatus(200);
-
   const update = req.body;
   if (!update) return;
-
   const message = update.message || update.channel_post;
   if (!message || !message.text) return;
-
   const chatId = message.chat.id;
   const text = message.text;
-
   console.log(`[Bot Webhook] 收到消息: ${text.slice(0, 50)}`);
-
   handleMessage(chatId, text).catch(e => {
     console.error('[Bot Webhook] 处理失败:', e.message);
   });
@@ -59,14 +60,10 @@ app.post('/webhook/telegram', async (req, res) => {
 
 // ===== 设置 Webhook =====
 async function setWebhook() {
-  // Railway 注入 RAILWAY_PUBLIC_DOMAIN
   const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
-  let webhookUrl;
-  if (domain) {
-    webhookUrl = `https://${domain}/webhook/telegram`;
-  } else {
-    webhookUrl = `http://localhost:${PORT}/webhook/telegram`;
-  }
+  const webhookUrl = domain
+    ? `https://${domain}/webhook/telegram`
+    : `http://localhost:${PORT}/webhook/telegram`;
 
   const data = JSON.stringify({ url: webhookUrl, drop_pending_updates: true });
 
@@ -122,7 +119,7 @@ app.get('/api/transfers', async (req, res) => {
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-// 定时检查新转账
+// ===== 定时检查新转账（增量监控） =====
 async function checkNewTransfers() {
   try {
     const provider = new ethers.providers.JsonRpcProvider({ url: RPC_URL, timeout: 30000 });
@@ -130,7 +127,6 @@ async function checkNewTransfers() {
     if (maxBlock >= currentBlock) return;
 
     const startBlock = maxBlock + 1;
-    const endBlock = currentBlock; // 直接到最新，不限制 50000
     const seenHashes = new Set(transfers.map(t => t.txHash));
     let newRecords = [];
 
@@ -140,7 +136,7 @@ async function checkNewTransfers() {
         const logs = await provider.getLogs({
           address: ARK_CONTRACT,
           topics: [TRANSFER_TOPIC, POOL_TOPIC, whaleTopic],
-          fromBlock: startBlock, toBlock: endBlock,
+          fromBlock: startBlock, toBlock: currentBlock,
         });
         for (const l of logs) {
           if (seenHashes.has(l.transactionHash)) continue;
@@ -167,21 +163,21 @@ async function checkNewTransfers() {
       await notifyNewTransfers(newRecords, transfers);
     }
 
-    maxBlock = endBlock;
-    console.log(`[Bot] 已检查到区块 ${endBlock}, 监控 ${getAllAddresses().length} 个地址`);
+    maxBlock = currentBlock;
+    console.log(`[Bot] 已检查到区块 ${maxBlock}, 监控 ${getAllAddresses().length} 个地址`);
   } catch(e) {
     console.error('[Bot] 检查失败:', e.message);
   }
 }
 
-setTimeout(() => checkNewTransfers(), 3000);
-setInterval(() => checkNewTransfers(), 60 * 1000);
+// 每 30 秒检查一次
+setInterval(() => checkNewTransfers(), 30 * 1000);
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`ARK 监控服务: http://localhost:${PORT}`);
   console.log(`数据: ${transfers.filter(t => t.txHash !== 'placeholder').length} 条`);
   console.log(`监控: ${getAllAddresses().length} 个地址`);
 
-  // 启动后设置 webhook
-  setTimeout(() => setWebhook(), 2000);
+  // 延迟 3 秒设置 webhook
+  setTimeout(() => setWebhook(), 3000);
 });
