@@ -3,11 +3,12 @@ const path = require('path');
 const { ethers } = require('ethers');
 const { init: initBot, scanAndPushAddress, notifyNewTransfers, sendTestMessage, handleMessage, sendTelegramTo } = require('./api/notifier');
 const initialTransfers = require('./api/initial_transfers.json');
+const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json()); // 解析 JSON body（Telegram webhook 需要）
+app.use(express.json());
 
 const BOT_TOKEN = '8526583093:AAEOv3YC804ILxqPfYH-h_miZ9M6jpYHUDE';
 const RPC_URL = 'https://bsc-mainnet.nodereal.io/v1/fdc3ae39b7b845669e15f730ecf71475';
@@ -26,7 +27,6 @@ function getAllAddresses() {
 function onNewBotData(records) {
   if (records.length === 0) return;
   const addr = records[0].to.toLowerCase();
-  // 移除旧 placeholder，合并新数据
   transfers = transfers.filter(t => !(t.to.toLowerCase() === addr && t.txHash === 'placeholder'));
   const existingHashes = new Set(transfers.map(t => t.txHash));
   const newOnes = records.filter(r => !existingHashes.has(r.txHash));
@@ -38,37 +38,38 @@ function onNewBotData(records) {
 initBot(transfers, onNewBotData);
 
 // ===== Telegram Webhook =====
-// 接收 Telegram 的消息更新
 app.post('/webhook/telegram', async (req, res) => {
-  res.sendStatus(200); // 立即返回 200 避免 Telegram 重试
-  
+  res.sendStatus(200);
+
   const update = req.body;
   if (!update) return;
-  
+
   const message = update.message || update.channel_post;
   if (!message || !message.text) return;
-  
+
   const chatId = message.chat.id;
   const text = message.text;
-  
+
   console.log(`[Bot Webhook] 收到消息: ${text.slice(0, 50)}`);
-  
-  // 异步处理，不阻塞响应
+
   handleMessage(chatId, text).catch(e => {
     console.error('[Bot Webhook] 处理失败:', e.message);
   });
 });
 
-// ===== 设置 Webhook（启动时） =====
+// ===== 设置 Webhook =====
 async function setWebhook() {
-  const railwayUrl = process.env.RAILWAY_PUBLIC_DOMAIN 
-    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-    : `http://localhost:${PORT}`;
-  const webhookUrl = `${railwayUrl}/webhook/telegram`;
-  
-  const https = require('https');
+  // Railway 注入 RAILWAY_PUBLIC_DOMAIN
+  const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
+  let webhookUrl;
+  if (domain) {
+    webhookUrl = `https://${domain}/webhook/telegram`;
+  } else {
+    webhookUrl = `http://localhost:${PORT}/webhook/telegram`;
+  }
+
   const data = JSON.stringify({ url: webhookUrl, drop_pending_updates: true });
-  
+
   return new Promise((resolve, reject) => {
     const req = https.request({
       hostname: 'api.telegram.org',
@@ -79,9 +80,14 @@ async function setWebhook() {
       let body = '';
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
-        const result = JSON.parse(body);
-        console.log('[Bot Webhook] 设置结果:', result.description || JSON.stringify(result));
-        resolve(result);
+        try {
+          const result = JSON.parse(body);
+          console.log('[Bot Webhook] 设置结果:', result.description || JSON.stringify(result));
+          resolve(result);
+        } catch(e) {
+          console.log('[Bot Webhook] 响应:', body);
+          resolve(null);
+        }
       });
     });
     req.on('error', (e) => {
@@ -93,7 +99,7 @@ async function setWebhook() {
   });
 }
 
-// ===== 现有 API =====
+// ===== API =====
 app.get('/api/add-address', async (req, res) => {
   const address = req.query.address?.trim().toLowerCase();
   if (!address || !/^0x[a-f0-9]{40}$/.test(address)) {
@@ -122,12 +128,12 @@ async function checkNewTransfers() {
     const provider = new ethers.providers.JsonRpcProvider({ url: RPC_URL, timeout: 30000 });
     const currentBlock = await provider.getBlockNumber();
     if (maxBlock >= currentBlock) return;
-    
+
     const startBlock = maxBlock + 1;
-    const endBlock = Math.min(startBlock + 50000, currentBlock);
+    const endBlock = currentBlock; // 直接到最新，不限制 50000
     const seenHashes = new Set(transfers.map(t => t.txHash));
     let newRecords = [];
-    
+
     for (const addr of getAllAddresses()) {
       const whaleTopic = '0x000000000000000000000000' + addr.slice(2);
       try {
@@ -149,16 +155,18 @@ async function checkNewTransfers() {
             value: ethers.utils.formatUnits(l.data, 18),
           });
         }
-      } catch(e) {}
+      } catch(e) {
+        console.error(`[Bot] 检查 ${addr.slice(0,10)} 失败:`, e.message);
+      }
     }
-    
+
     if (newRecords.length > 0) {
       transfers = [...newRecords, ...transfers];
       transfers.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
       console.log(`[Bot] 发现 ${newRecords.length} 条新转账`);
       await notifyNewTransfers(newRecords, transfers);
     }
-    
+
     maxBlock = endBlock;
     console.log(`[Bot] 已检查到区块 ${endBlock}, 监控 ${getAllAddresses().length} 个地址`);
   } catch(e) {
@@ -173,7 +181,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`ARK 监控服务: http://localhost:${PORT}`);
   console.log(`数据: ${transfers.filter(t => t.txHash !== 'placeholder').length} 条`);
   console.log(`监控: ${getAllAddresses().length} 个地址`);
-  
+
   // 启动后设置 webhook
   setTimeout(() => setWebhook(), 2000);
 });
