@@ -22,6 +22,9 @@ function init(transfersRef_, onNewData_) {
   transfersRef = transfersRef_;
   onNewData = onNewData_;
   if (bot) return;
+  // 清除旧session防止409冲突
+  const https = require("https");
+  https.get("https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook?drop_pending_updates=true");
   
   bot = new TelegramBot(BOT_TOKEN, { polling: true });
   
